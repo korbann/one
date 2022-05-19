@@ -1,0 +1,130 @@
+#WIN32 MAKEFILE
+#-----------------------------------------------------------------------------------------------------
+
+ifeq ($(ECHO),)
+ECHO:=echo
+endif
+
+ifeq ($(MKDIR),)
+MKDIR:=mkdir -p
+endif
+#-----------------------------------------------------------------------------------------------------
+# Compiler base settings
+GCC:= gcc
+GCC_CMN:= $(GCC) -g -c -Wall -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast -m32
+CC:=$(GCC_CMN) -std=c99 #-Werror=vla
+#-----------------------------------------------------------------------------------------------------
+# Global directories
+BIN_DIR:=Bin_Win32
+OBJ_DIR:=$(BIN_DIR)/Obj
+#-----------------------------------------------------------------------------------------------------
+# Paths setting
+APPLICATION_NAME:=TestApplication_win32
+REPO_FRAMEWORK_PATH:=submodule-framework
+
+BSP_PATH:=submodule-bsp-win32
+BSP_FREERTOS_PATH:=$(BSP_PATH)/FreeRTOS/portable
+#-----------------------------------------------------------------------------------------------------
+# Flags setting
+BSP_FLAGS:= -DWIN32 -D_FILE_WORKER -D_WIN32_WINNT=0x0601 -DprojCOVERAGE_TEST=0
+GCC_FLAGS:= -Wall -g3
+Compile_FLAGS:= -c -fmessage-length=0
+Optimization_FLAG:= -O0
+Framework_FLAGS:= -DNAND_RECORD_CHECK_ON -DNAND_DEBUG -DDEBUGMSG_INFO# -DENABLE_EEPROM
+
+#--------------------------------------------------------------------------------------------------------------------------------
+#											MODULES BUILD
+#--------------------------------------------------------------------------------------------------------------------------------
+# FRAMEWORK
+Framework_DIR:=$(REPO_FRAMEWORK_PATH)/Framework
+include $(Framework_DIR)/Makefile
+Framework_INCS:=$(foreach inc,$(MODULE_INCLUDES),$(addprefix -I $(Framework_DIR)/,$(inc)))
+Framework_SRCS:=$(foreach src, $(MODULE_C_SRCS),$(wildcard $(Framework_DIR)/$(src)/*.c))
+Framework_OBJS:=$(addprefix $(OBJ_DIR)/,$(Framework_SRCS:.c=.o))
+
+ifndef Framework_FLAGS
+Framework_FLAGS:=$(MODULE_FLAGS)
+endif
+
+#-----------------------------------------------------------------------------------------------------
+#FREERTOS
+FreeRTOS_DIR:=$(REPO_FRAMEWORK_PATH)/Middleware/FreeRTOSv10.4.3
+include $(FreeRTOS_DIR)/Makefile
+FreeRTOS_INCS:= -I $(FreeRTOS_DIR)/$(MODULE_INCLUDES) -I $(BSP_FREERTOS_PATH)
+FreeRTOS_SRCS:=$(foreach src, $(MODULE_C_SRCS),$(wildcard $(FreeRTOS_DIR)/$(src)/*.c))
+FreeRTOS_SRCS+=$(wildcard $(BSP_FREERTOS_PATH)/*.c)
+FreeRTOS_OBJS:=$(addprefix $(OBJ_DIR)/,$(FreeRTOS_SRCS:.c=.o))
+
+#-----------------------------------------------------------------------------------------------------
+#TESTAPP
+Application_DIR:=TestApplication
+include $(Application_DIR)/Makefile
+Application_INCS:=$(foreach inc,$(MODULE_INCLUDES),$(addprefix -I $(Application_DIR)/,$(inc)))
+Application_SRCS:=$(foreach src, $(MODULE_C_SRCS),$(wildcard $(Application_DIR)/$(src)/*.c))
+Application_OBJS:=$(addprefix $(OBJ_DIR)/,$(Application_SRCS:.c=.o))
+
+#-----------------------------------------------------------------------------------------------------
+#BSP
+include $(BSP_PATH)/Makefile
+BSP_INCS:=$(foreach inc,$(MODULE_INCLUDES),$(addprefix -I $(BSP_PATH)/,$(inc)))
+BSP_SRCS:=$(foreach src, $(MODULE_C_SRCS),$(wildcard $(BSP_PATH)/$(src)/*.c))
+BSP_OBJS:=$(addprefix $(OBJ_DIR)/,$(BSP_SRCS:.c=.o))
+
+ifndef BSP_FLAGS
+BSP_FLAGS:=$(MODULE_FLAGS)
+endif
+
+BSP_DATA:=$(BSP_PATH)/Data
+DATA_DIR:=$(BIN_DIR)/Data
+Input:=$(wildcard $(BSP_DATA)/*.*)
+Output:=$(patsubst $(BSP_DATA)/%, $(DATA_DIR)/%, $(Input:Input=Output))
+
+$(DATA_DIR)/% : $(BSP_DATA)/%
+	@[ -d $(DATA_DIR) ] || ${MKDIR} $(DATA_DIR)
+	@cp -rf $< $@;
+
+copy_data: $(Output)
+
+#-----------------------------------------------------------------------------------------------------
+#All: selection of modules for the build (debug build only)
+APP_OBJS:= $(Application_OBJS) $(Framework_OBJS) $(FreeRTOS_OBJS) $(BSP_OBJS)
+APP_INCS:= $(Application_INCS) $(Framework_INCS) $(FreeRTOS_INCS) $(BSP_INCS)
+APP_BIN:= $(BIN_DIR)/$(APPLICATION_NAME).exe
+APP_COMPILE_FLAGS:= $(GCC_FLAGS) $(Optimization_FLAG) $(BSP_FLAGS) $(Framework_FLAGS) $(Compile_FLAGS)
+
+$(APP_OBJS): $(OBJ_DIR)/%.o:%.c
+	@${MKDIR} $(dir $@)
+	@$(ECHO) Compiling $< to $@...
+	@$(CC) $(APP_COMPILE_FLAGS) $< -o $@ $(APP_INCS)
+
+#--------------------------------------------------------------------------------------------------------------------------------
+#											TARGET RULES
+#--------------------------------------------------------------------------------------------------------------------------------
+.PHONY : help
+help :
+	@$(ECHO) "Summary of Makefile targets"
+	@$(ECHO) "  Build targets:"
+	@$(ECHO) "    all                               - Build $(APPLICATION_NAME)"
+	@$(ECHO)
+	@$(ECHO) "  Clean targets:"
+	@$(ECHO) "    clean                             - Remove bin folder"
+#--------------------------------------------------------------------------------------------------------------------------------
+
+#Application build
+.PHONY: application
+application_start:
+	@$(ECHO) Building $(APPLICATION_NAME)...
+
+application: application_start copy_data $(APP_OBJS)
+	@$(ECHO) Linking $(APP_BIN)...
+	@$(GCC) -o $(APP_BIN) $(APP_OBJS) -lwinmm -lgdi32 -ldxguid -m32
+	@$(ECHO) --- Application is Done ---
+
+.DEFAULT_GOAL:= all
+.PHONY: all
+all: application
+
+# Clean all
+.PHONY: clean
+clean:
+	@rm -rf $(BIN_DIR)
